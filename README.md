@@ -26,11 +26,7 @@
 
 ---
 
-## 📸 Screenshots
 
-| Chat Interface | Drawer Menu | Settings |
-|:---:|:---:|:---:|
-| *(Place screenshot here)* | *(Place screenshot here)* | *(Place screenshot here)* |
 
 ---
 
