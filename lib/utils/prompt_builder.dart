@@ -58,23 +58,31 @@ class PromptBuilder {
     final buffer = StringBuffer();
 
     // 1. System Message (Strict ChatML)
-    buffer.write("<|im_start|>system\nYou are a helpful AI assistant.<|im_end|>\n");
+    // Explicitly define persona to prevent hallucinations
+    buffer.write("<|im_start|>system\nYou are TARA, a helpful and concise offline AI assistant. Your name is TARA. You are not a human. You do not have a gender. You answer questions directly and briefly. Do not continue fictional stories, do not roleplay, do not create personas, and do not extend conversations that never happened. Always answer directly and factually.<|im_end|>\n");
 
-    // 2. Last User Message ONLY (Strict Context Trimming)
-    // We ignore previous history to prevent the model from looping on its own previous bad output.
-    if (messages.isNotEmpty) {
-      final lastMsg = messages.last;
-      if (lastMsg['role'] == 'user') {
-        buffer.write("<|im_start|>user\n${lastMsg['text']}<|im_end|>\n");
-      } else {
-        // If the last message isn't user (rare), find the last user message
-        final lastUserMsg = messages.lastWhere(
-          (m) => m['role'] == 'user',
-          orElse: () => {},
-        );
-        if (lastUserMsg.isNotEmpty) {
-           buffer.write("<|im_start|>user\n${lastUserMsg['text']}<|im_end|>\n");
-        }
+    // 2. Add History (Last 6 messages / 3 turns)
+    // We restore memory but SANITIZE it to prevent "poisoning" from previous bad outputs.
+    int startIndex = messages.length > 6 ? messages.length - 6 : 0;
+    for (int i = startIndex; i < messages.length; i++) {
+      final msg = messages[i];
+      final role = msg['role'];
+      String content = msg['text'] ?? "";
+      
+      // CRITICAL: Sanitize content to remove any leaked tags or hallucinations
+      // This prevents the model from seeing "<|user|>" or "Taral" in its own history
+      content = content
+          .replaceAll('<|im_start|>', '')
+          .replaceAll('<|im_end|>', '')
+          .replaceAll('<|user|>', '')
+          .replaceAll('<|assistant|>', '')
+          .replaceAll('</s>', '')
+          .trim();
+
+      if (role == 'user') {
+        buffer.write("<|im_start|>user\n$content<|im_end|>\n");
+      } else if (role == 'assistant') {
+        buffer.write("<|im_start|>assistant\n$content<|im_end|>\n");
       }
     }
 

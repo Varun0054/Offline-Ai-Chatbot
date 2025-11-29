@@ -111,6 +111,20 @@ class ChatProvider with ChangeNotifier {
           }
           
           fullResponse += token;
+          
+          // Real-time Sanitization for UI
+          String displayResponse = fullResponse
+              .replaceAll('<|im_end|>', '')
+              .replaceAll('<|im_end|', '')
+              .replaceAll('<|user|>', '')
+              .replaceAll('<|user|', '')
+              .replaceAll('<|assistant|>', '')
+              .replaceAll('InternalEnumerator', '')
+              .replaceAll('TEntity', '')
+              .replaceAll('Tentity', '')
+              .replaceAll(RegExp(r'\bTarra\b', caseSensitive: false), 'TARA')
+              .replaceAll(RegExp(r'\bTaral\b', caseSensitive: false), 'TARA')
+              .replaceAll(RegExp(r'\bTaraLove\b', caseSensitive: false), 'TARA');
 
           // Robust check on the full string for various stop patterns
           // The model might generate "User:" or "Al:" if it gets confused
@@ -138,11 +152,20 @@ class ChatProvider with ChangeNotifier {
                 .replaceAll('</s>', '')
                 .replaceAll('</s', '') // Handle partial
                 .replaceAll('<|user|>', '')
+                .replaceAll('<|user|', '') // Handle partial
+                .replaceAll('<|assistant|>', '')
+                .replaceAll('InternalEnumerator', '')
+                .replaceAll('TEntity', '')
+                .replaceAll('Tentity', '')
                 .replaceAll('<|model|>', '')
                 .replaceAll(RegExp(r'\nUser:.*'), '') // Remove everything after User:
                 .replaceAll(RegExp(r'\nAl:.*'), '')
                 .replaceAll('User:', '')
                 .replaceAll('Al:', '')
+                // Enforce TARA Persona Name
+                .replaceAll(RegExp(r'\bTarra\b', caseSensitive: false), 'TARA')
+                .replaceAll(RegExp(r'\bTaral\b', caseSensitive: false), 'TARA')
+                .replaceAll(RegExp(r'\bTaraLove\b', caseSensitive: false), 'TARA')
                 .trim();
             
             // Update local UI state
@@ -157,13 +180,37 @@ class ChatProvider with ChangeNotifier {
           // Update local UI state
           final msgIndex = _messages.indexWhere((m) => m['id'] == assistantMsgId);
           if (msgIndex != -1) {
-            _messages[msgIndex] = {..._messages[msgIndex], 'text': fullResponse};
+            _messages[msgIndex] = {..._messages[msgIndex], 'text': displayResponse};
             notifyListeners();
           }
         }
         
+        // Final Sanitization before saving to DB
+        String finalResponse = fullResponse
+            .replaceAll('<|im_end|>', '')
+            .replaceAll('<|im_end|', '')
+            .replaceAll('<|im_start|>', '')
+            .replaceAll('<|im_start|', '')
+            .replaceAll('</s>', '')
+            .replaceAll('</s', '')
+            .replaceAll('<|user|>', '')
+            .replaceAll('<|user|', '')
+            .replaceAll('<|assistant|>', '')
+            .replaceAll('InternalEnumerator', '')
+            .replaceAll('TEntity', '')
+            .replaceAll('Tentity', '')
+            .replaceAll('<|model|>', '')
+            .replaceAll(RegExp(r'\nUser:.*'), '')
+            .replaceAll(RegExp(r'\nAl:.*'), '')
+            .replaceAll('User:', '')
+            .replaceAll('Al:', '')
+            .replaceAll(RegExp(r'\bTarra\b', caseSensitive: false), 'TARA')
+            .replaceAll(RegExp(r'\bTaral\b', caseSensitive: false), 'TARA')
+            .replaceAll(RegExp(r'\bTaraLove\b', caseSensitive: false), 'TARA')
+            .trim();
+
         // Final save to DB
-        await _dbHelper.updateMessageText(assistantMsgId, fullResponse);
+        await _dbHelper.updateMessageText(assistantMsgId, finalResponse);
 
       } else {
         // Handle no model error locally

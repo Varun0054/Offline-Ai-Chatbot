@@ -17,7 +17,10 @@ static std::vector<std::string> g_stop_strs = {
     "</s>",
     "<|assistant|>",
     "<|user|>",
-    "<|system|>"
+    "<|system|>",
+    "InternalEnumerator",
+    "TEntity",
+    "Tentity"
 };
 
 static std::string g_recent_output;
