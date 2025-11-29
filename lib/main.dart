@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'providers/chat_provider.dart';
 import 'providers/settings_provider.dart';
-import 'ui/home_screen.dart';
+import 'ui/chat_screen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -26,7 +26,7 @@ class MyApp extends StatelessWidget {
           useMaterial3: true,
           textTheme: GoogleFonts.interTextTheme(),
         ),
-        home: const HomeScreen(),
+        home: const ChatScreen(),
       ),
     );
   }

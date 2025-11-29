@@ -45,6 +45,12 @@ android {
             path = file("../../native/CMakeLists.txt")
         }
     }
+
+    packaging {
+        jniLibs {
+            keepDebugSymbols.add("**/*.so")
+        }
+    }
 }
 
 flutter {

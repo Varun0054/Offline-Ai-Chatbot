@@ -108,10 +108,20 @@ class NativeClient {
     return _createConversation();
   }
 
+  Isolate? _currentIsolate;
+  ReceivePort? _currentReceivePort;
+  StreamController<String>? _currentController;
+
   Stream<String> generateReply(int conversationId, String prompt) {
+    // Cancel any existing generation
+    stopGeneration();
+
     // Stream controller to bridge Isolate -> UI
     final controller = StreamController<String>();
+    _currentController = controller;
+    
     final receivePort = ReceivePort();
+    _currentReceivePort = receivePort;
     
     // Spawn the isolate
     Isolate.spawn(_generateReplyIsolate, _GenerateReplyArgs(
@@ -119,7 +129,9 @@ class NativeClient {
       prompt: prompt,
       sendPort: receivePort.sendPort,
       libraryPath: Platform.isAndroid ? 'liboffline_chat_native.so' : 'offline_chat_native.dll',
-    ));
+    )).then((isolate) {
+      _currentIsolate = isolate;
+    });
 
     // Listen to messages from the isolate
     receivePort.listen((message) {
@@ -129,14 +141,31 @@ class NativeClient {
         // EOS or Done
         controller.close();
         receivePort.close();
+        _currentIsolate = null;
       } else if (message is _Error) {
         controller.addError(message.message);
         controller.close();
         receivePort.close();
+        _currentIsolate = null;
       }
     });
 
     return controller.stream;
+  }
+
+  void stopGeneration() {
+    if (_currentIsolate != null) {
+      _currentIsolate!.kill(priority: Isolate.immediate);
+      _currentIsolate = null;
+    }
+    if (_currentReceivePort != null) {
+      _currentReceivePort!.close();
+      _currentReceivePort = null;
+    }
+    if (_currentController != null && !_currentController!.isClosed) {
+      _currentController!.close();
+      _currentController = null;
+    }
   }
 }
 

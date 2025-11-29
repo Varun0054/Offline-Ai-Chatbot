@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.14)
 
 project(offline_chat_native)
 
+set(CMAKE_BUILD_TYPE Release)
+
 # Add llama.cpp subdirectory
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

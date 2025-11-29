@@ -4,6 +4,7 @@ import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import '../data/database_helper.dart';
 import '../native/native_client.dart';
+import '../utils/prompt_builder.dart';
 
 class ChatProvider with ChangeNotifier {
   List<Map<String, dynamic>> _conversations = [];
@@ -47,16 +48,27 @@ class ChatProvider with ChangeNotifier {
 
   Future<void> sendMessage(String text) async {
     if (_currentConversationId == null) return;
+    if (_isGenerating) return; // Prevent concurrent generation
 
-    // 1. Save user message
-    await _dbHelper.insertMessage(_currentConversationId!, 'user', text);
-    await loadMessages(_currentConversationId!);
-
-    // 2. Generate reply
     _isGenerating = true;
     notifyListeners();
+    print("DEBUG: Starting generation with FIXES applied (Race Condition + Stop Sequence)");
 
     try {
+      // 1. Save user message to DB
+      final userMsgId = await _dbHelper.insertMessage(_currentConversationId!, 'user', text);
+      
+      // OPTIMIZATION: Add to local list immediately instead of reloading from DB
+      // This prevents the "flicker" and race condition
+      _messages.add({
+        'id': userMsgId,
+        'conversation_id': _currentConversationId,
+        'role': 'user',
+        'text': text,
+        // Add timestamp if needed, but for now this is enough for UI
+      });
+      notifyListeners();
+
       // Initialize runtime if needed
       final modelPath = await _dbHelper.getSetting('model_path');
       final threadsStr = await _dbHelper.getSetting('cpu_threads');
@@ -71,39 +83,116 @@ class ChatProvider with ChangeNotifier {
         }
         
         _nativeClient.initRuntime(finalModelPath, "Q4_0", threads);
+        
+        // --- Build Prompt with History ---
+        final history = _messages; 
+        final prompt = PromptBuilder.buildPrompt(finalModelPath, history);
+        print("Generated Prompt:\n$prompt"); 
+        
+        // 2. Create placeholder assistant message in DB
+        final assistantMsgId = await _dbHelper.insertMessage(_currentConversationId!, 'assistant', '');
+        
+        // OPTIMIZATION: Add placeholder to local list immediately
+        _messages.add({
+          'id': assistantMsgId,
+          'conversation_id': _currentConversationId,
+          'role': 'assistant',
+          'text': '', // Start empty
+        });
+        notifyListeners();
+
+        // Stream generation
+        String fullResponse = "";
+        
+        await for (final token in _nativeClient.generateReply(_currentConversationId!, prompt)) {
+          // Check for stop sequences
+          if (token.contains('<|im_end|>') || token.contains('<|im_start|>') || token.contains('</s>')) {
+             break; 
+          }
+          
+          fullResponse += token;
+
+          // Robust check on the full string for various stop patterns
+          // The model might generate "User:" or "Al:" if it gets confused
+          if (fullResponse.contains('<|im_end|>') || 
+              fullResponse.contains('<|im_start|>') ||
+              fullResponse.contains('</s>') ||
+              fullResponse.contains('<|user|>') ||
+              fullResponse.contains('<|model|>') ||
+              fullResponse.contains('\nUser:') ||
+              fullResponse.contains('\nAl:') || // Common hallucination
+              fullResponse.contains('\nSystem:') ||
+              fullResponse.endsWith('User:') || // In case it's at the very end
+              fullResponse.endsWith('Al:') ||
+              // Check for partial stop tokens at the end (common issue)
+              fullResponse.endsWith('<|im_end|') ||
+              fullResponse.endsWith('<|im_start|') ||
+              fullResponse.endsWith('</s')
+          ) {
+            // Clean up the stop token from the response
+            fullResponse = fullResponse
+                .replaceAll('<|im_end|>', '')
+                .replaceAll('<|im_end|', '') // Handle partial
+                .replaceAll('<|im_start|>', '')
+                .replaceAll('<|im_start|', '') // Handle partial
+                .replaceAll('</s>', '')
+                .replaceAll('</s', '') // Handle partial
+                .replaceAll('<|user|>', '')
+                .replaceAll('<|model|>', '')
+                .replaceAll(RegExp(r'\nUser:.*'), '') // Remove everything after User:
+                .replaceAll(RegExp(r'\nAl:.*'), '')
+                .replaceAll('User:', '')
+                .replaceAll('Al:', '')
+                .trim();
+            
+            // Update local UI state
+            final msgIndex = _messages.indexWhere((m) => m['id'] == assistantMsgId);
+            if (msgIndex != -1) {
+              _messages[msgIndex] = {..._messages[msgIndex], 'text': fullResponse};
+              notifyListeners();
+            }
+            break; 
+          }
+          
+          // Update local UI state
+          final msgIndex = _messages.indexWhere((m) => m['id'] == assistantMsgId);
+          if (msgIndex != -1) {
+            _messages[msgIndex] = {..._messages[msgIndex], 'text': fullResponse};
+            notifyListeners();
+          }
+        }
+        
+        // Final save to DB
+        await _dbHelper.updateMessageText(assistantMsgId, fullResponse);
+
       } else {
-        await _dbHelper.insertMessage(_currentConversationId!, 'assistant', "Error: No model selected. Please go to Settings and select a model.");
+        // Handle no model error locally
+         _messages.add({
+          'id': -1, // Temporary ID
+          'conversation_id': _currentConversationId,
+          'role': 'assistant',
+          'text': "Error: No model selected. Please go to Settings and select a model.",
+        });
+        notifyListeners();
         return;
       }
-
-      // Create placeholder assistant message
-      final assistantMsgId = await _dbHelper.insertMessage(_currentConversationId!, 'assistant', '');
-      await loadMessages(_currentConversationId!);
-
-      // Stream generation
-      String fullResponse = "";
-      
-      await for (final token in _nativeClient.generateReply(_currentConversationId!, text)) {
-        fullResponse += token;
-        
-        // Update local state for UI
-        final msgIndex = _messages.indexWhere((m) => m['id'] == assistantMsgId);
-        if (msgIndex != -1) {
-          _messages[msgIndex] = {..._messages[msgIndex], 'text': fullResponse};
-          notifyListeners();
-        }
-      }
-      
-      // Final save
-      await _dbHelper.updateMessageText(assistantMsgId, fullResponse);
       
     } catch (e, stackTrace) {
       print("Error generating reply: $e");
       print(stackTrace);
-      await _dbHelper.insertMessage(_currentConversationId!, 'assistant', "Error: $e");
+      // Show error in UI
+       _messages.add({
+          'id': -1,
+          'conversation_id': _currentConversationId,
+          'role': 'assistant',
+          'text': "Error: $e",
+        });
+        notifyListeners();
     } finally {
       _isGenerating = false;
-      await loadMessages(_currentConversationId!);
+      notifyListeners();
+      // We do NOT call loadMessages() here to avoid overwriting the state we just carefully built.
+      // The state is already consistent with DB (except maybe IDs for error msgs, but that's fine).
     }
   }
 
@@ -133,6 +222,14 @@ class ChatProvider with ChangeNotifier {
     } catch (e) {
       print("Error copying asset: $e");
       return assetPath; // Fallback to original path if copy fails
+    }
+  }
+
+  void stopGeneration() {
+    if (_isGenerating) {
+      _nativeClient.stopGeneration();
+      _isGenerating = false;
+      notifyListeners();
     }
   }
 
