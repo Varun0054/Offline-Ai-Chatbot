@@ -1,27 +1,34 @@
-# Offline AI Chat 🤖💬
+# TARA - Offline AI Chat 🤖💬
 
 ![Flutter](https://img.shields.io/badge/Flutter-%2302569B.svg?style=for-the-badge&logo=Flutter&logoColor=white)
 ![C++](https://img.shields.io/badge/c++-%2300599C.svg?style=for-the-badge&logo=c%2B%2B&logoColor=white)
 ![Privacy Focused](https://img.shields.io/badge/Privacy-Focused-success?style=for-the-badge)
 
-A powerful, **fully offline** chat application built with Flutter and C++. Experience the power of Large Language Models (LLMs) directly on your device without any internet connection. 🚀
+**TARA** is a powerful, **fully offline** chat assistant built with Flutter and C++. Experience the power of Large Language Models (LLMs) like TinyLlama and Qwen directly on your device without any internet connection. 🚀
 
 ---
 
 ## ✨ Features
 
 *   **🔒 100% Offline & Private**: Your data never leaves your device. All inference happens locally.
+*   **🤖 TARA AI**: A friendly, helpful assistant powered by optimized local LLMs.
+*   **🎨 Modern "ChatFlow" UI**:
+    *   **Gradient Aesthetics**: Beautiful Blue-Purple gradient design.
+    *   **ChatGPT-Style Navigation**: Direct launch to chat, with a Drawer for history.
+    *   **Smart Loading**: Non-intrusive "Thinking..." status in the header.
+    *   **Motivational Quotes**: Inspiring quotes displayed on empty chat states.
 *   **⚡ High Performance**: Powered by `llama.cpp` via Dart FFI for near-native speed.
-*   **🧠 Bring Your Own Model**: Support for GGUF models (Llama 3, Mistral, Gemma, etc.).
+*   **🧠 Optimized Inference**:
+    *   **Strict ChatML**: Prevents hallucinations and looping.
+    *   **Smart Stop Tokens**: Aggressively handles model output to ensure clean replies.
+    *   **Loop Detection**: Automatically detects and stops repetitive text.
 *   **💾 Local History**: Conversations are saved securely using SQLite.
-*   **🎨 Modern UI**: Beautiful Material 3 design with dark mode support.
-*   **⚙️ Customizable**: Adjust CPU threads and quantization settings for your device.
 
 ---
 
 ## 📸 Screenshots
 
-| Home Screen | Chat Interface | Settings |
+| Chat Interface | Drawer Menu | Settings |
 |:---:|:---:|:---:|
 | *(Place screenshot here)* | *(Place screenshot here)* | *(Place screenshot here)* |
 
@@ -51,7 +58,9 @@ A powerful, **fully offline** chat application built with Flutter and C++. Exper
 
 3.  **Download a Model:**
     *   This app requires a **GGUF** format model.
-    *   Recommended: [Llama-3-8B-Instruct-GGUF](https://huggingface.co/lmstudio-community/Meta-Llama-3-8B-Instruct-GGUF) or [Mistral-7B-Instruct-v0.3-GGUF](https://huggingface.co/maziyarpanahi/Mistral-7B-Instruct-v0.3-GGUF).
+    *   **Recommended**:
+        *   [TinyLlama-1.1B-Chat-v1.0-GGUF](https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF) (Fastest)
+        *   [Qwen2.5-0.5B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF) (Balanced)
     *   **Important**: Create a folder named `Model` inside your `Downloads` directory:
         *   **Windows**: `C:\Users\YourName\Downloads\Model`
         *   **Android**: `/storage/emulated/0/Download/Model`
@@ -63,24 +72,18 @@ A powerful, **fully offline** chat application built with Flutter and C++. Exper
         flutter run
         ```
     *   **Windows**:
-        You may need to build the native library first if not configured automatically.
         ```bash
-        cd native
-        mkdir build && cd build
-        cmake ..
-        cmake --build . --config Release
-        # Ensure offline_chat_native.dll is in the build output or system path.
+        flutter run -d windows
         ```
 
 ---
 
 ## 📖 Usage
 
-1.  Open the app.
-2.  Go to **Settings** (⚙️ icon).
-3.  Select your downloaded model from the dropdown list.
-4.  (Optional) Adjust CPU threads (usually 4-8) and quantization preset.
-5.  Return to the home screen and start chatting!
+1.  **Launch**: App opens directly to TARA.
+2.  **Menu**: Tap the top-left menu icon to access **History** and **Settings**.
+3.  **Settings**: Select your downloaded model from the dropdown list.
+4.  **Chat**: Start typing! TARA will reply instantly.
 
 ---
 
