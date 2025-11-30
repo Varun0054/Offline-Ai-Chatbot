@@ -15,7 +15,10 @@ class ChatProvider with ChangeNotifier {
   List<Map<String, dynamic>> get conversations => _conversations;
   List<Map<String, dynamic>> get messages => _messages;
   bool get isGenerating => _isGenerating;
+
   int? get currentConversationId => _currentConversationId;
+  double _generationSpeed = 0.0;
+  double get generationSpeed => _generationSpeed;
 
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
   final NativeClient _nativeClient = NativeClient();
@@ -81,6 +84,18 @@ class ChatProvider with ChangeNotifier {
         if (modelPath.startsWith('assets/')) {
           finalModelPath = await _copyAssetToAppDir(modelPath);
         }
+
+        if (!File(finalModelPath).existsSync()) {
+           _messages.add({
+            'id': -1,
+            'conversation_id': _currentConversationId,
+            'role': 'assistant',
+            'text': "Error: Model file not found at $finalModelPath. Please download the model.",
+          });
+          notifyListeners();
+          _isGenerating = false;
+          return;
+        }
         
         _nativeClient.initRuntime(finalModelPath, "Q4_0", threads);
         
@@ -103,6 +118,9 @@ class ChatProvider with ChangeNotifier {
 
         // Stream generation
         String fullResponse = "";
+        DateTime lastUpdateTime = DateTime.now();
+        DateTime startTime = DateTime.now();
+        int tokenCount = 0;
         
         await for (final token in _nativeClient.generateReply(_currentConversationId!, prompt)) {
           // Check for stop sequences
@@ -111,7 +129,14 @@ class ChatProvider with ChangeNotifier {
           }
           
           fullResponse += token;
+          tokenCount++;
           
+          // Calculate Speed
+          final elapsed = DateTime.now().difference(startTime).inMilliseconds;
+          if (elapsed > 0) {
+            _generationSpeed = (tokenCount / elapsed) * 1000;
+          }
+
           // Real-time Sanitization for UI
           String displayResponse = fullResponse
               .replaceAll('<|im_end|>', '')
@@ -150,18 +175,11 @@ class ChatProvider with ChangeNotifier {
                 .replaceAll('<|im_start|>', '')
                 .replaceAll('<|im_start|', '') // Handle partial
                 .replaceAll('</s>', '')
-                .replaceAll('</s', '') // Handle partial
+                .replaceAll('<|endoftext|>', '')
                 .replaceAll('<|user|>', '')
-                .replaceAll('<|user|', '') // Handle partial
                 .replaceAll('<|assistant|>', '')
-                .replaceAll('InternalEnumerator', '')
-                .replaceAll('TEntity', '')
-                .replaceAll('Tentity', '')
-                .replaceAll('<|model|>', '')
-                .replaceAll(RegExp(r'\nUser:.*'), '') // Remove everything after User:
-                .replaceAll(RegExp(r'\nAl:.*'), '')
                 .replaceAll('User:', '')
-                .replaceAll('Al:', '')
+                .replaceAll('Assistant:', '')
                 // Enforce TARA Persona Name
                 .replaceAll(RegExp(r'\bTarra\b', caseSensitive: false), 'TARA')
                 .replaceAll(RegExp(r'\bTaral\b', caseSensitive: false), 'TARA')
@@ -181,9 +199,17 @@ class ChatProvider with ChangeNotifier {
           final msgIndex = _messages.indexWhere((m) => m['id'] == assistantMsgId);
           if (msgIndex != -1) {
             _messages[msgIndex] = {..._messages[msgIndex], 'text': displayResponse};
-            notifyListeners();
+            
+            // OPTIMIZATION: Throttle UI updates to prevent lag
+            // Update only if 100ms passed OR 5 tokens generated
+            if (DateTime.now().difference(lastUpdateTime).inMilliseconds > 100 || tokenCount % 5 == 0) {
+               notifyListeners();
+               lastUpdateTime = DateTime.now();
+            }
           }
         }
+        // Final update to ensure everything is shown
+        notifyListeners();
         
         // Final Sanitization before saving to DB
         String finalResponse = fullResponse

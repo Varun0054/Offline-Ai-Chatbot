@@ -119,7 +119,9 @@ class _ChatScreenState extends State<ChatScreen> {
                           ),
                         ),
                         Text(
-                          chatProvider.isGenerating ? 'Thinking...' : 'Online',
+                          chatProvider.isGenerating 
+                              ? 'Thinking... (${chatProvider.generationSpeed.toStringAsFixed(1)} t/s)' 
+                              : 'Online',
                           style: GoogleFonts.poppins(
                             fontSize: 12,
                             color: Colors.white70,

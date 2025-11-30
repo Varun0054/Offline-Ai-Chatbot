@@ -21,9 +21,9 @@ class SettingsProvider with ChangeNotifier {
   }
 
   Future<void> _loadSettings() async {
-    _modelPath = await _dbHelper.getSetting('model_path') ?? '/storage/emulated/0/Download/Model/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf';
+    _modelPath = await _dbHelper.getSetting('model_path') ?? '/storage/emulated/0/Download/Model/Qwen-1.8B-Finetuned.i1-Q4_K_M.gguf';
     final threadsStr = await _dbHelper.getSetting('cpu_threads');
-    _cpuThreads = threadsStr != null ? int.tryParse(threadsStr) ?? 4 : 4;
+    _cpuThreads = threadsStr != null ? int.tryParse(threadsStr) ?? 2 : 2;
     _quantization = await _dbHelper.getSetting('quantization') ?? 'Q4_0';
     notifyListeners();
   }

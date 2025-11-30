@@ -8,19 +8,17 @@ static llama_model* g_model = nullptr;
 static llama_context* g_ctx = nullptr;
 static llama_sampler* g_sampler = nullptr;
 
-static int g_threads = 4;
-static int g_n_ctx = 2048;
+static int g_threads = 2; // Optimized for mobile (big.LITTLE)
+static int g_n_ctx = 2048; // Optimized for 4GB RAM devices
 
-// Stop sequences for TinyLlama / ChatML
+// Stop sequences for Qwen / ChatML
 static std::vector<std::string> g_stop_strs = {
     "<|im_end|>",
+    "<|im_start|>",
     "</s>",
-    "<|assistant|>",
-    "<|user|>",
-    "<|system|>",
-    "InternalEnumerator",
-    "TEntity",
-    "Tentity"
+    "<|endoftext|>",
+    "User:", // Fallback
+    "Assistant:", // Fallback
 };
 
 static std::string g_recent_output;
@@ -29,6 +27,19 @@ static int g_repeat_count = 0;
 
 
 extern "C" {
+
+// Helper function to add a token to the batch
+void llama_batch_add(struct llama_batch & batch, llama_token id, llama_pos pos, const std::vector<llama_seq_id> & seq_ids, bool logits) {
+    batch.token   [batch.n_tokens] = id;
+    batch.pos     [batch.n_tokens] = pos;
+    batch.n_seq_id[batch.n_tokens] = seq_ids.size();
+    for (size_t i = 0; i < seq_ids.size(); ++i) {
+        batch.seq_id[batch.n_tokens][i] = seq_ids[i];
+    }
+    batch.logits  [batch.n_tokens] = logits;
+
+    batch.n_tokens++;
+}
 
 // ---------------------- INIT ------------------------------------
 
@@ -39,21 +50,23 @@ int init_runtime(const char* model_path, const char* quant_unused, int cpu_threa
 
     llama_backend_init();
 
-    // --- Load model ---
+    // --- Load Model ---
     llama_model_params mparams = llama_model_default_params();
+    mparams.use_mmap = false; // Force load into RAM (Fastest)
+    mparams.use_mlock = false; // Do NOT lock memory (causes crashes on some devices)
+    
     g_model = llama_model_load_from_file(model_path, mparams);
-
     if (!g_model) {
         return -1;
     }
 
     // --- Create context ---
     llama_context_params cparams = llama_context_default_params();
-    cparams.n_ctx = g_n_ctx;
-    cparams.n_batch = g_n_ctx; // Increase batch size to match context to prevent decode errors
+    cparams.n_ctx = 1024; // Reduced context for speed
+    cparams.n_batch = 1024;
     cparams.n_threads = g_threads;
     cparams.n_threads_batch = g_threads;
-    cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_ENABLED; // Enable Flash Attention for speed
+    cparams.flash_attn_type = LLAMA_FLASH_ATTN_TYPE_DISABLED;
 
     g_ctx = llama_init_from_model(g_model, cparams);
 
@@ -69,12 +82,13 @@ int init_runtime(const char* model_path, const char* quant_unused, int cpu_threa
     
     // Add samplers: Top-K, Top-P, Temp, Dist (Random)
     llama_sampler_chain_add(g_sampler, llama_sampler_init_top_k(40));
-    llama_sampler_chain_add(g_sampler, llama_sampler_init_top_p(0.9f, 1));
-    llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(0.8f));
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_top_p(0.95f, 1)); // Slightly higher Top-P for coherence
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_temp(0.6f)); // Lower Temp for less hallucination (more deterministic)
     llama_sampler_chain_add(g_sampler, llama_sampler_init_dist(1234));
     
-    // Penalties: last_n=64, repeat=1.2, freq=0.6, present=0.4 (User suggested values)
-    llama_sampler_chain_add(g_sampler, llama_sampler_init_penalties(64, 1.2f, 0.6f, 0.4f));
+    // Penalties: last_n=64, repeat=1.3, freq=0.6, present=0.4
+    // Increased repeat penalty to 1.3 to strongly discourage loops
+    llama_sampler_chain_add(g_sampler, llama_sampler_init_penalties(64, 1.3f, 0.6f, 0.4f));
 
     return 0;
 }
@@ -111,21 +125,17 @@ typedef void (*TokenCallback)(const char*);
 static llama_batch g_batch = {0};
 static int g_n_cur = 0;
 
+static std::vector<llama_token> g_prev_tokens;
+
 int start_completion(const char* prompt) {
     if (!g_ctx || !g_model) return -1;
 
-    // Clear KV cache to ensure clean state for full prompt re-evaluation
-    // Clear KV cache to ensure clean state for full prompt re-evaluation
-    if (g_ctx) {
-        llama_memory_clear(llama_get_memory(g_ctx), true);
-    }
-    
-    g_recent_output.clear(); // Clear stop sequence buffer
+    g_recent_output.clear(); 
     g_repeat_count = 0;
 
     const llama_vocab * vocab = llama_model_get_vocab(g_model);
 
-    // Tokenize
+    // Tokenize new prompt
     std::vector<llama_token> tokens;
     tokens.resize(strlen(prompt) + 32);
 
@@ -136,39 +146,72 @@ int start_completion(const char* prompt) {
         tokens.data(),
         (int)tokens.size(),
         true,   // add BOS
-        true    // parse special tokens (CRITICAL for ChatML tags like <|im_start|>)
+        true    // parse special tokens
     );
 
     if (count < 0) return -1;
     
-    // Ensure we don't exceed context size
     if (count >= g_n_ctx) {
-        // Truncate to leave space for generation (e.g., keep last g_n_ctx - 64 tokens)
-        // For now, just error out or truncate simple
         count = g_n_ctx - 64; 
         if (count < 1) count = 1;
     }
-    
     tokens.resize(count);
 
-    // Clean up previous batch if needed
+    // --- SMART KV CACHE REUSE ---
+    int n_past = 0;
+    
+    // Find common prefix with previous tokens
+    size_t common_len = 0;
+    for (size_t i = 0; i < tokens.size() && i < g_prev_tokens.size(); i++) {
+        if (tokens[i] == g_prev_tokens[i]) {
+            common_len++;
+        } else {
+            break;
+        }
+    }
+    
+    // If we have a common prefix, we can reuse it!
+    if (common_len > 0) {
+        n_past = common_len;
+        // Remove any KV cache beyond the common prefix
+        // This effectively "rewinds" the state to just after the common part
+        llama_memory_seq_rm(llama_get_memory(g_ctx), 0, n_past, -1);
+    } else {
+        // No match, clear everything
+        llama_memory_clear(llama_get_memory(g_ctx), true);
+    }
+    
+    // Update g_prev_tokens for next time
+    g_prev_tokens = tokens;
+
+    // Clean up previous batch
     if (g_batch.token) {
         llama_batch_free(g_batch);
     }
 
-    // Init batch with size equal to context to be safe
+    // Init batch
     g_batch = llama_batch_init(g_n_ctx, 0, 1); 
 
-    // Add prompt to batch
-    for (int i = 0; i < count; i++) {
-        g_batch.token[i] = tokens[i];
-        g_batch.pos[i]   = i;
-        g_batch.n_seq_id[i] = 1;
-        g_batch.seq_id[i][0] = 0;
-        g_batch.logits[i] = false;
+    // Add ONLY NEW tokens to batch
+    int n_eval = 0;
+    for (int i = n_past; i < count; i++) {
+        llama_batch_add(g_batch, tokens[i], i, { 0 }, false);
+        n_eval++;
     }
-    g_batch.n_tokens = count;
-    g_batch.logits[count - 1] = true; // Only compute logits for last token
+    
+    if (n_eval == 0) {
+        // Edge case: Prompt is identical to previous? 
+        // Should not happen in chat usually, but if so, just re-eval last token to get logits
+        if (count > 0) {
+             n_eval = 1;
+             llama_batch_add(g_batch, tokens[count-1], count-1, { 0 }, true);
+        }
+    } else {
+        // Set logits for the very last token
+        g_batch.logits[n_eval - 1] = true; 
+    }
+    
+    g_batch.n_tokens = n_eval;
 
     if (llama_decode(g_ctx, g_batch) != 0) {
         return -1;
@@ -219,39 +262,9 @@ int continue_completion(char* buf, int len) {
         }
     }
 
-    // 2. Aggressive Loop Detection
-    // Check if the last N characters are a repetition of the N characters before them
-    // We check for repetition lengths from 5 to 50
-    int text_len = g_recent_output.length();
-    if (text_len > 20) {
-        for (int pattern_len = 5; pattern_len <= 50 && pattern_len * 2 <= text_len; pattern_len++) {
-            std::string p1 = g_recent_output.substr(text_len - pattern_len, pattern_len);
-            std::string p2 = g_recent_output.substr(text_len - 2 * pattern_len, pattern_len);
-            
-            if (p1 == p2) {
-                // Found a repetition!
-                g_repeat_count++;
-                if (g_repeat_count >= 3) {
-                    // Repeated 3 times? Kill it.
-                    return 0; 
-                }
-                // If it's a very long repetition (like a whole sentence), kill it sooner
-                if (pattern_len > 20) {
-                     return 0;
-                }
-                break; // Found a pattern, no need to check other lengths for this token
-            } else {
-                // Reset if we don't find a match at the very end? 
-                // No, because we might be building a new pattern.
-                // But we should reset g_repeat_count if we generated something NEW.
-                // This logic is a bit tricky per-token.
-                // Simplified: If we detect ANY repetition at the tail, we increment.
-                // If we generate a token that breaks the repetition, we should zero it.
-                // But 'p1 == p2' only checks immediate repetition.
-            }
-        }
-    }
-
+    // 2. Aggressive Loop Detection - REMOVED for performance
+    // The native sampler's repetition penalty is sufficient and much faster.
+    
     // Prepare next batch for the NEXT token
     g_batch.n_tokens = 1;
     g_batch.token[0] = best_token;
