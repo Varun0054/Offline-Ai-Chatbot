@@ -1,17 +1,20 @@
-# TARA - Offline AI Chat 🤖💬
+# TARA - Hybrid Offline-First AI Chat 🤖💬
 
 ![Flutter](https://img.shields.io/badge/Flutter-%2302569B.svg?style=for-the-badge&logo=Flutter&logoColor=white)
 ![C++](https://img.shields.io/badge/c++-%2300599C.svg?style=for-the-badge&logo=c%2B%2B&logoColor=white)
 ![Privacy Focused](https://img.shields.io/badge/Privacy-Focused-success?style=for-the-badge)
+![Hybrid Mode](https://img.shields.io/badge/Hybrid-Online%2FOffline-blueviolet?style=for-the-badge)
 
-**TARA** is a powerful, **fully offline** chat assistant built with Flutter and C++. Experience the power of Large Language Models (LLMs) like TinyLlama and Qwen directly on your device without any internet connection. 🚀
+**TARA** is a powerful, **Hybrid Offline-First** chat assistant built with Flutter and C++. Experience the best of both worlds: complete privacy with local LLMs (TinyLlama, Qwen) or high-performance cloud inference (Groq, Gemini) when you need it. 🚀
 
 ---
 
 ## ✨ Features
 
-*   **🔒 100% Offline & Private**: Your data never leaves your device. All inference happens locally.
-*   **🤖 TARA AI**: A friendly, helpful assistant powered by optimized local LLMs.
+*   **🌍 Hybrid Architecture**:
+    *   **Offline Mode**: 100% private, local inference using `llama.cpp`. No internet required.
+    *   **Online Mode**: Switch instantly to cloud providers like **Groq** (Llama 3, Mixtral) or **Google Gemini** for faster, more capable responses.
+*   **🤖 TARA AI**: A friendly, helpful assistant powered by your choice of intelligence.
 *   **🎨 Modern "ChatFlow" UI**:
     *   **Gradient Aesthetics**: Beautiful Blue-Purple gradient design.
     *   **ChatGPT-Style Navigation**: Direct launch to chat, with a Drawer for history.
@@ -72,6 +75,13 @@
         flutter run -d windows
         ```
 
+### 🔑 Online Mode Setup (Optional)
+
+To use the Online Mode features:
+1.  Go to **Settings** in the app.
+2.  Enter your API Key for **Groq** or **Gemini**.
+3.  Toggle the "Online Mode" switch in the chat screen.
+
 ---
 
 ## 📖 Usage
@@ -88,7 +98,9 @@
 *   **Frontend**: Flutter (Dart)
 *   **State Management**: Provider
 *   **Database**: sqflite
-*   **Inference Engine**: [llama.cpp](https://github.com/ggerganov/llama.cpp) (C++)
+*   **Inference Engine**:
+    *   **Offline**: [llama.cpp](https://github.com/ggerganov/llama.cpp) (C++)
+    *   **Online**: Groq API, Google Gemini API
 *   **Bridge**: Dart FFI (Foreign Function Interface)
 
 ---
