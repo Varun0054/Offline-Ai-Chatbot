@@ -5,14 +5,14 @@
 ![Privacy Focused](https://img.shields.io/badge/Privacy-Focused-success?style=for-the-badge)
 ![Hybrid Mode](https://img.shields.io/badge/Hybrid-Online%2FOffline-blueviolet?style=for-the-badge)
 
-**TARA** is a powerful, **Hybrid Offline-First** chat assistant built with Flutter and C++. Experience the best of both worlds: complete privacy with local LLMs (TinyLlama, Qwen) or high-performance cloud inference (Groq, Gemini) when you need it. 🚀
+**TARA** is a powerful, **Hybrid Offline-First** chat assistant built with Flutter and C++. Experience the best of both worlds: complete privacy with local LLMs (Qwen 1.8B, Qwen 2.5 0.5B) or high-performance cloud inference (Groq, Gemini) when you need it. 🚀
 
 ---
 
 ## ✨ Features
 
 *   **🌍 Hybrid Architecture**:
-    *   **Offline Mode**: 100% private, local inference using `llama.cpp`. No internet required.
+    *   **Offline Mode**: 100% private, local inference using `llama.cpp`. No internet required. Supported models: **Qwen 1.8B**, **Qwen 2.5 0.5B**.
     *   **Online Mode**: Switch instantly to cloud providers like **Groq** (Llama 3, Mixtral) or **Google Gemini** for faster, more capable responses.
 *   **🤖 TARA AI**: A friendly, helpful assistant powered by your choice of intelligence.
 *   **🎨 Modern "ChatFlow" UI**:
@@ -58,8 +58,8 @@
 3.  **Download a Model:**
     *   This app requires a **GGUF** format model.
     *   **Recommended**:
-        *   [TinyLlama-1.1B-Chat-v1.0-GGUF](https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF) (Fastest)
-        *   [Qwen2.5-0.5B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF) (Balanced)
+        *   [Qwen-1.8B-Finetuned-GGUF](https://huggingface.co/Qwen/Qwen1.5-1.8B-Chat-GGUF) (Recommended for quality)
+        *   [Qwen2.5-0.5B-Instruct-GGUF](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF) (Fastest)
     *   **Important**: Create a folder named `Model` inside your `Downloads` directory:
         *   **Windows**: `C:\Users\YourName\Downloads\Model`
         *   **Android**: `/storage/emulated/0/Download/Model`
