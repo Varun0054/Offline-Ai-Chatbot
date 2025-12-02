@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../providers/settings_provider.dart';
+import '../providers/chat_provider.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -13,13 +14,20 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   final TextEditingController _modelPathController = TextEditingController();
   final TextEditingController _threadsController = TextEditingController();
+  final TextEditingController _groqKeyController = TextEditingController();
+  final TextEditingController _geminiKeyController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
     final settings = Provider.of<SettingsProvider>(context, listen: false);
+    final chatProvider = Provider.of<ChatProvider>(context, listen: false);
+    
     _modelPathController.text = settings.modelPath;
     _threadsController.text = settings.cpuThreads.toString();
+    _groqKeyController.text = chatProvider.groqApiKey;
+    _geminiKeyController.text = chatProvider.geminiApiKey;
+    
     // Trigger scan
     WidgetsBinding.instance.addPostFrameCallback((_) {
       settings.scanForModels();
@@ -66,13 +74,93 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           // Settings Content
           Expanded(
-            child: Consumer<SettingsProvider>(
-              builder: (context, settings, child) {
+            child: Consumer2<SettingsProvider, ChatProvider>(
+              builder: (context, settings, chatProvider, child) {
                 return ListView(
                   padding: const EdgeInsets.all(20.0),
                   children: [
+                    // --- Online Mode Settings ---
                     Text(
-                      'Model Configuration',
+                      'Online Mode Configuration',
+                      style: GoogleFonts.poppins(
+                        fontSize: 18, 
+                        fontWeight: FontWeight.bold,
+                        color: const Color(0xFF4A00E0),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    // Provider Selection
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: Colors.grey[100],
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: chatProvider.selectedProvider,
+                          isExpanded: true,
+                          items: [
+                            DropdownMenuItem(value: 'groq', child: Text('Groq (Llama 3 70B)', style: GoogleFonts.poppins())),
+                            DropdownMenuItem(value: 'gemini', child: Text('Google Gemini (Flash)', style: GoogleFonts.poppins())),
+                          ],
+                          onChanged: (value) {
+                            if (value != null) {
+                              chatProvider.setProvider(value);
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Groq API Key
+                    TextField(
+                      controller: _groqKeyController,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: 'Groq API Key',
+                        labelStyle: GoogleFonts.poppins(),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.save),
+                          onPressed: () {
+                            chatProvider.setApiKeys(groq: _groqKeyController.text);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Groq API Key Saved')),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // Gemini API Key
+                    TextField(
+                      controller: _geminiKeyController,
+                      obscureText: true,
+                      decoration: InputDecoration(
+                        labelText: 'Gemini API Key',
+                        labelStyle: GoogleFonts.poppins(),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                        suffixIcon: IconButton(
+                          icon: const Icon(Icons.save),
+                          onPressed: () {
+                            chatProvider.setApiKeys(gemini: _geminiKeyController.text);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('Gemini API Key Saved')),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+
+                    const Divider(height: 40),
+
+                    // --- Offline Mode Settings ---
+                    Text(
+                      'Offline Model Configuration',
                       style: GoogleFonts.poppins(
                         fontSize: 18, 
                         fontWeight: FontWeight.bold,
@@ -97,7 +185,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                                     ? settings.modelPath 
                                     : null,
                                 isExpanded: true,
-                                hint: Text('Select Model', style: GoogleFonts.poppins()),
+                                hint: Text('Select Local Model', style: GoogleFonts.poppins()),
                                 items: settings.availableModels.map((path) {
                                   return DropdownMenuItem(
                                     value: path,

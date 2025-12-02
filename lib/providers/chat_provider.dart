@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:path_provider/path_provider.dart';
 import '../data/database_helper.dart';
-import '../native/native_client.dart';
+import '../services/llm_service.dart';
 import '../utils/prompt_builder.dart';
 
 class ChatProvider with ChangeNotifier {
@@ -12,26 +12,73 @@ class ChatProvider with ChangeNotifier {
   int? _currentConversationId;
   bool _isGenerating = false;
 
+  // Online Mode State
+  bool _isOnlineMode = false;
+  String _selectedProvider = 'groq'; // 'groq' or 'gemini'
+  String _groqApiKey = '';
+  String _geminiApiKey = '';
+
   List<Map<String, dynamic>> get conversations => _conversations;
   List<Map<String, dynamic>> get messages => _messages;
   bool get isGenerating => _isGenerating;
+  bool get isOnlineMode => _isOnlineMode;
+  String get selectedProvider => _selectedProvider;
+  String get groqApiKey => _groqApiKey;
+  String get geminiApiKey => _geminiApiKey;
 
   int? get currentConversationId => _currentConversationId;
   double _generationSpeed = 0.0;
   double get generationSpeed => _generationSpeed;
 
   final DatabaseHelper _dbHelper = DatabaseHelper.instance;
-  final NativeClient _nativeClient = NativeClient();
+  
+  // Services
+  final LocalLLMService _localService = LocalLLMService();
+  final GroqLLMService _groqService = GroqLLMService();
+  final GeminiLLMService _geminiService = GeminiLLMService();
 
   ChatProvider() {
     _loadConversations();
-    // Initialize native client (mock/stub)
-    // In real app, might want to do this based on settings or user action
-    // _nativeClient.initRuntime("path/to/model", "Q4_0", 4);
+    _loadSettings();
   }
 
   Future<void> _loadConversations() async {
     _conversations = await _dbHelper.getConversations();
+    notifyListeners();
+  }
+
+  Future<void> _loadSettings() async {
+    // Load online mode settings from DB or SharedPrefs
+    // For now, we'll assume they are stored in the generic settings table
+    _groqApiKey = await _dbHelper.getSetting('groq_api_key') ?? '';
+    _geminiApiKey = await _dbHelper.getSetting('gemini_api_key') ?? '';
+    _selectedProvider = await _dbHelper.getSetting('online_provider') ?? 'groq';
+    final onlineModeStr = await _dbHelper.getSetting('is_online_mode');
+    _isOnlineMode = onlineModeStr == 'true';
+    notifyListeners();
+  }
+
+  Future<void> toggleOnlineMode(bool value) async {
+    _isOnlineMode = value;
+    await _dbHelper.setSetting('is_online_mode', value.toString());
+    notifyListeners();
+  }
+
+  Future<void> setProvider(String provider) async {
+    _selectedProvider = provider;
+    await _dbHelper.setSetting('online_provider', provider);
+    notifyListeners();
+  }
+
+  Future<void> setApiKeys({String? groq, String? gemini}) async {
+    if (groq != null) {
+      _groqApiKey = groq;
+      await _dbHelper.setSetting('groq_api_key', groq);
+    }
+    if (gemini != null) {
+      _geminiApiKey = gemini;
+      await _dbHelper.setSetting('gemini_api_key', gemini);
+    }
     notifyListeners();
   }
 
@@ -44,215 +91,133 @@ class ChatProvider with ChangeNotifier {
   Future<void> loadMessages(int conversationId) async {
     _currentConversationId = conversationId;
     final rawMessages = await _dbHelper.getMessages(conversationId);
-    // Deep copy to ensure mutability of both list and maps
     _messages = rawMessages.map((m) => Map<String, dynamic>.from(m)).toList();
     notifyListeners();
   }
 
   Future<void> sendMessage(String text) async {
     if (_currentConversationId == null) return;
-    if (_isGenerating) return; // Prevent concurrent generation
+    if (_isGenerating) return;
 
     _isGenerating = true;
     notifyListeners();
-    print("DEBUG: Starting generation with FIXES applied (Race Condition + Stop Sequence)");
+    print("DEBUG: Starting generation (Online: $_isOnlineMode, Provider: $_selectedProvider)");
 
     try {
-      // 1. Save user message to DB
-      final userMsgId = await _dbHelper.insertMessage(_currentConversationId!, 'user', text);
-      
-      // OPTIMIZATION: Add to local list immediately instead of reloading from DB
-      // This prevents the "flicker" and race condition
-      _messages.add({
-        'id': userMsgId,
+      // 1. Optimistic UI Update for User Message
+      final tempUserMsgId = DateTime.now().millisecondsSinceEpoch; // Temporary ID
+      final userMsgMap = {
+        'id': tempUserMsgId,
         'conversation_id': _currentConversationId,
         'role': 'user',
         'text': text,
-        // Add timestamp if needed, but for now this is enough for UI
+      };
+      _messages.add(userMsgMap);
+      notifyListeners(); // Show user message immediately
+
+      // 2. Save user message to DB in background
+      final userMsgId = await _dbHelper.insertMessage(_currentConversationId!, 'user', text);
+      // Update the message in the list with the real ID
+      final index = _messages.indexWhere((m) => m['id'] == tempUserMsgId);
+      if (index != -1) {
+        _messages[index]['id'] = userMsgId;
+      }
+
+      // 2. Create placeholder assistant message
+      final assistantMsgId = await _dbHelper.insertMessage(_currentConversationId!, 'assistant', '');
+      _messages.add({
+        'id': assistantMsgId,
+        'conversation_id': _currentConversationId,
+        'role': 'assistant',
+        'text': '',
       });
       notifyListeners();
 
-      // Initialize runtime if needed
-      final modelPath = await _dbHelper.getSetting('model_path');
-      final threadsStr = await _dbHelper.getSetting('cpu_threads');
-      final threads = int.tryParse(threadsStr ?? '4') ?? 4;
+      // 3. Select Service and Config
+      LLMService service;
+      String config; // Model path or API Key
 
-      if (modelPath != null && modelPath.isNotEmpty) {
-        String finalModelPath = modelPath;
-        
-        // Check if model path is an asset path (starts with assets/)
-        if (modelPath.startsWith('assets/')) {
-          finalModelPath = await _copyAssetToAppDir(modelPath);
+      if (_isOnlineMode) {
+        if (_selectedProvider == 'groq') {
+          service = _groqService;
+          config = _groqApiKey;
+          if (config.isEmpty) throw Exception("Groq API Key is missing.");
+        } else {
+          service = _geminiService;
+          config = _geminiApiKey;
+          if (config.isEmpty) throw Exception("Gemini API Key is missing.");
         }
-
-        if (!File(finalModelPath).existsSync()) {
-           _messages.add({
-            'id': -1,
-            'conversation_id': _currentConversationId,
-            'role': 'assistant',
-            'text': "Error: Model file not found at $finalModelPath. Please download the model.",
-          });
-          notifyListeners();
-          _isGenerating = false;
-          return;
-        }
-        
-        _nativeClient.initRuntime(finalModelPath, "Q4_0", threads);
-        
-        // --- Build Prompt with History ---
-        final history = _messages; 
-        final prompt = PromptBuilder.buildPrompt(finalModelPath, history);
-        print("Generated Prompt:\n$prompt"); 
-        
-        // 2. Create placeholder assistant message in DB
-        final assistantMsgId = await _dbHelper.insertMessage(_currentConversationId!, 'assistant', '');
-        
-        // OPTIMIZATION: Add placeholder to local list immediately
-        _messages.add({
-          'id': assistantMsgId,
-          'conversation_id': _currentConversationId,
-          'role': 'assistant',
-          'text': '', // Start empty
-        });
-        notifyListeners();
-
-        // Stream generation
-        String fullResponse = "";
-        DateTime lastUpdateTime = DateTime.now();
-        DateTime startTime = DateTime.now();
-        int tokenCount = 0;
-        
-        await for (final token in _nativeClient.generateReply(_currentConversationId!, prompt)) {
-          // Check for stop sequences
-          if (token.contains('<|im_end|>') || token.contains('<|im_start|>') || token.contains('</s>')) {
-             break; 
-          }
-          
-          fullResponse += token;
-          tokenCount++;
-          
-          // Calculate Speed
-          final elapsed = DateTime.now().difference(startTime).inMilliseconds;
-          if (elapsed > 0) {
-            _generationSpeed = (tokenCount / elapsed) * 1000;
-          }
-
-          // Real-time Sanitization for UI
-          String displayResponse = fullResponse
-              .replaceAll('<|im_end|>', '')
-              .replaceAll('<|im_end|', '')
-              .replaceAll('<|user|>', '')
-              .replaceAll('<|user|', '')
-              .replaceAll('<|assistant|>', '')
-              .replaceAll('InternalEnumerator', '')
-              .replaceAll('TEntity', '')
-              .replaceAll('Tentity', '')
-              .replaceAll(RegExp(r'\bTarra\b', caseSensitive: false), 'TARA')
-              .replaceAll(RegExp(r'\bTaral\b', caseSensitive: false), 'TARA')
-              .replaceAll(RegExp(r'\bTaraLove\b', caseSensitive: false), 'TARA');
-
-          // Robust check on the full string for various stop patterns
-          // The model might generate "User:" or "Al:" if it gets confused
-          if (fullResponse.contains('<|im_end|>') || 
-              fullResponse.contains('<|im_start|>') ||
-              fullResponse.contains('</s>') ||
-              fullResponse.contains('<|user|>') ||
-              fullResponse.contains('<|model|>') ||
-              fullResponse.contains('\nUser:') ||
-              fullResponse.contains('\nAl:') || // Common hallucination
-              fullResponse.contains('\nSystem:') ||
-              fullResponse.endsWith('User:') || // In case it's at the very end
-              fullResponse.endsWith('Al:') ||
-              // Check for partial stop tokens at the end (common issue)
-              fullResponse.endsWith('<|im_end|') ||
-              fullResponse.endsWith('<|im_start|') ||
-              fullResponse.endsWith('</s')
-          ) {
-            // Clean up the stop token from the response
-            fullResponse = fullResponse
-                .replaceAll('<|im_end|>', '')
-                .replaceAll('<|im_end|', '') // Handle partial
-                .replaceAll('<|im_start|>', '')
-                .replaceAll('<|im_start|', '') // Handle partial
-                .replaceAll('</s>', '')
-                .replaceAll('<|endoftext|>', '')
-                .replaceAll('<|user|>', '')
-                .replaceAll('<|assistant|>', '')
-                .replaceAll('User:', '')
-                .replaceAll('Assistant:', '')
-                // Enforce TARA Persona Name
-                .replaceAll(RegExp(r'\bTarra\b', caseSensitive: false), 'TARA')
-                .replaceAll(RegExp(r'\bTaral\b', caseSensitive: false), 'TARA')
-                .replaceAll(RegExp(r'\bTaraLove\b', caseSensitive: false), 'TARA')
-                .trim();
-            
-            // Update local UI state
-            final msgIndex = _messages.indexWhere((m) => m['id'] == assistantMsgId);
-            if (msgIndex != -1) {
-              _messages[msgIndex] = {..._messages[msgIndex], 'text': fullResponse};
-              notifyListeners();
-            }
-            break; 
-          }
-          
-          // Update local UI state
-          final msgIndex = _messages.indexWhere((m) => m['id'] == assistantMsgId);
-          if (msgIndex != -1) {
-            _messages[msgIndex] = {..._messages[msgIndex], 'text': displayResponse};
-            
-            // OPTIMIZATION: Throttle UI updates to prevent lag
-            // Update only if 100ms passed OR 5 tokens generated
-            if (DateTime.now().difference(lastUpdateTime).inMilliseconds > 100 || tokenCount % 5 == 0) {
-               notifyListeners();
-               lastUpdateTime = DateTime.now();
-            }
-          }
-        }
-        // Final update to ensure everything is shown
-        notifyListeners();
-        
-        // Final Sanitization before saving to DB
-        String finalResponse = fullResponse
-            .replaceAll('<|im_end|>', '')
-            .replaceAll('<|im_end|', '')
-            .replaceAll('<|im_start|>', '')
-            .replaceAll('<|im_start|', '')
-            .replaceAll('</s>', '')
-            .replaceAll('</s', '')
-            .replaceAll('<|user|>', '')
-            .replaceAll('<|user|', '')
-            .replaceAll('<|assistant|>', '')
-            .replaceAll('InternalEnumerator', '')
-            .replaceAll('TEntity', '')
-            .replaceAll('Tentity', '')
-            .replaceAll('<|model|>', '')
-            .replaceAll(RegExp(r'\nUser:.*'), '')
-            .replaceAll(RegExp(r'\nAl:.*'), '')
-            .replaceAll('User:', '')
-            .replaceAll('Al:', '')
-            .replaceAll(RegExp(r'\bTarra\b', caseSensitive: false), 'TARA')
-            .replaceAll(RegExp(r'\bTaral\b', caseSensitive: false), 'TARA')
-            .replaceAll(RegExp(r'\bTaraLove\b', caseSensitive: false), 'TARA')
-            .trim();
-
-        // Final save to DB
-        await _dbHelper.updateMessageText(assistantMsgId, finalResponse);
-
       } else {
-        // Handle no model error locally
-         _messages.add({
-          'id': -1, // Temporary ID
-          'conversation_id': _currentConversationId,
-          'role': 'assistant',
-          'text': "Error: No model selected. Please go to Settings and select a model.",
-        });
-        notifyListeners();
-        return;
+        service = _localService;
+        String? modelPath = await _dbHelper.getSetting('model_path');
+        if (modelPath == null || modelPath.isEmpty) {
+           // Fallback to default path if not set
+           modelPath = '/storage/emulated/0/Download/Model/Qwen-1.8B-Finetuned.i1-Q4_K_M.gguf';
+        }
+        
+        if (modelPath.isEmpty) {
+           throw Exception("No local model selected.");
+        }
+        
+        // Handle asset path logic
+        if (modelPath.startsWith('assets/')) {
+          config = await _copyAssetToAppDir(modelPath);
+        } else {
+          config = modelPath;
+        }
+        
+        if (!File(config).existsSync()) {
+           throw Exception("Model file not found at $config");
+        }
+      }
+
+      // 4. Generate Stream
+      String fullResponse = "";
+      DateTime lastUpdateTime = DateTime.now();
+      DateTime startTime = DateTime.now();
+      int tokenCount = 0;
+
+      // Pass history excluding the placeholder we just added
+      final historyForPrompt = _messages.sublist(0, _messages.length - 1);
+
+      await for (final token in service.generateStream(config, historyForPrompt)) {
+        // Basic stop sequence check (mostly for local)
+        if (!_isOnlineMode && (token.contains('<|im_end|>') || token.contains('</s>'))) {
+           break; 
+        }
+        
+        fullResponse += token;
+        tokenCount++;
+        
+        // Calculate Speed
+        final elapsed = DateTime.now().difference(startTime).inMilliseconds;
+        if (elapsed > 0) {
+          _generationSpeed = (tokenCount / elapsed) * 1000;
+        }
+
+        // Real-time Sanitization (mostly for local)
+        String displayResponse = _sanitizeResponse(fullResponse);
+
+        // Update UI
+        final msgIndex = _messages.indexWhere((m) => m['id'] == assistantMsgId);
+        if (msgIndex != -1) {
+          _messages[msgIndex] = {..._messages[msgIndex], 'text': displayResponse};
+          
+          if (DateTime.now().difference(lastUpdateTime).inMilliseconds > 100 || tokenCount % 5 == 0) {
+             notifyListeners();
+             lastUpdateTime = DateTime.now();
+          }
+        }
       }
       
-    } catch (e, stackTrace) {
+      notifyListeners();
+      
+      // Final save
+      String finalResponse = _sanitizeResponse(fullResponse).trim();
+      await _dbHelper.updateMessageText(assistantMsgId, finalResponse);
+
+    } catch (e) {
       print("Error generating reply: $e");
-      print(stackTrace);
       // Show error in UI
        _messages.add({
           'id': -1,
@@ -264,9 +229,22 @@ class ChatProvider with ChangeNotifier {
     } finally {
       _isGenerating = false;
       notifyListeners();
-      // We do NOT call loadMessages() here to avoid overwriting the state we just carefully built.
-      // The state is already consistent with DB (except maybe IDs for error msgs, but that's fine).
     }
+  }
+
+  String _sanitizeResponse(String text) {
+    if (_isOnlineMode) return text; // Online models usually don't need heavy sanitization
+    
+    // Local model sanitization logic from before
+    return text
+        .replaceAll('<|im_end|>', '')
+        .replaceAll('<|im_end|', '')
+        .replaceAll('<|user|>', '')
+        .replaceAll('<|assistant|>', '')
+        .replaceAll('InternalEnumerator', '')
+        .replaceAll(RegExp(r'\bTarra\b', caseSensitive: false), 'TARA')
+        .replaceAll(RegExp(r'\bTaral\b', caseSensitive: false), 'TARA')
+        .replaceAll(RegExp(r'\bTaraLove\b', caseSensitive: false), 'TARA');
   }
 
   Future<String> _copyAssetToAppDir(String assetPath) async {
@@ -281,26 +259,25 @@ class ChatProvider with ChangeNotifier {
       
       final file = File("${modelDir.path}/$filename");
       
-      // Only copy if not exists
       if (!await file.exists()) {
-        print("Copying model from assets to ${file.path}...");
         final byteData = await rootBundle.load(assetPath);
         await file.writeAsBytes(byteData.buffer.asUint8List());
-        print("Model copied successfully.");
-      } else {
-        print("Model already exists at ${file.path}");
       }
       
       return file.path;
     } catch (e) {
-      print("Error copying asset: $e");
-      return assetPath; // Fallback to original path if copy fails
+      return assetPath;
     }
   }
 
   void stopGeneration() {
     if (_isGenerating) {
-      _nativeClient.stopGeneration();
+      if (_isOnlineMode) {
+        if (_selectedProvider == 'groq') _groqService.stop();
+        else _geminiService.stop();
+      } else {
+        _localService.stop();
+      }
       _isGenerating = false;
       notifyListeners();
     }

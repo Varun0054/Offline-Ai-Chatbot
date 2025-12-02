@@ -41,12 +41,31 @@ class HomeScreen extends StatelessWidget {
                         color: Colors.white,
                       ),
                     ),
-                    Text(
-                      'Your Conversations',
-                      style: GoogleFonts.poppins(
-                        fontSize: 14,
-                        color: Colors.white70,
-                      ),
+                    Consumer<ChatProvider>(
+                      builder: (context, chatProvider, child) {
+                        return Row(
+                          children: [
+                            Text(
+                              chatProvider.isOnlineMode ? 'Online Mode' : 'Offline Mode',
+                              style: GoogleFonts.poppins(
+                                fontSize: 14,
+                                color: Colors.white70,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Switch(
+                              value: chatProvider.isOnlineMode,
+                              onChanged: (value) {
+                                chatProvider.toggleOnlineMode(value);
+                              },
+                              activeColor: Colors.greenAccent,
+                              activeTrackColor: Colors.white24,
+                              inactiveThumbColor: Colors.white,
+                              inactiveTrackColor: Colors.white24,
+                            ),
+                          ],
+                        );
+                      },
                     ),
                   ],
                 ),

@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'dart:math';
 import '../providers/chat_provider.dart';
 import 'settings_screen.dart';
+import '../providers/settings_provider.dart';
 
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key});
@@ -51,47 +52,6 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      key: _scaffoldKey,
-      drawer: _buildDrawer(context),
-      body: Column(
-        children: [
-          // Custom Gradient Header
-          Container(
-            padding: const EdgeInsets.only(top: 35, left: 10, right: 16, bottom: 15),
-            decoration: const BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Color(0xFF4A00E0), Color(0xFF8E2DE2)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.only(
-                bottomLeft: Radius.circular(25),
-                bottomRight: Radius.circular(25),
-              ),
-            ),
-            child: Consumer<ChatProvider>(
-              builder: (context, chatProvider, child) {
-                return Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.menu, color: Colors.white),
-                      onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-                    ),
-                    const SizedBox(width: 5),
-                    // Avatar with Loading State
-                    Container(
-                      width: 45,
-                      height: 45,
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                      ),
-                      child: Center(
-                        child: chatProvider.isGenerating
-                            ? const SizedBox(
-                                width: 24,
-                                height: 24,
-                                child: CircularProgressIndicator(
                                   strokeWidth: 2.5,
                                   valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4A00E0)),
                                 ),
@@ -118,14 +78,29 @@ class _ChatScreenState extends State<ChatScreen> {
                             color: Colors.white,
                           ),
                         ),
-                        Text(
-                          chatProvider.isGenerating 
-                              ? 'Thinking... (${chatProvider.generationSpeed.toStringAsFixed(1)} t/s)' 
-                              : 'Online',
-                          style: GoogleFonts.poppins(
-                            fontSize: 12,
-                            color: Colors.white70,
-                          ),
+                        Row(
+                          children: [
+                            Text(
+                              chatProvider.isOnlineMode ? 'Online' : 'Offline',
+                              style: GoogleFonts.poppins(
+                                fontSize: 12,
+                                color: Colors.white70,
+                              ),
+                            ),
+                            Transform.scale(
+                              scale: 0.6,
+                              child: Switch(
+                                value: chatProvider.isOnlineMode,
+                                onChanged: (value) {
+                                  chatProvider.toggleOnlineMode(value);
+                                },
+                                activeColor: Colors.greenAccent,
+                                activeTrackColor: Colors.white24,
+                                inactiveThumbColor: Colors.white,
+                                inactiveTrackColor: Colors.white24,
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -190,105 +165,82 @@ class _ChatScreenState extends State<ChatScreen> {
                     final message = chatProvider.messages[index];
                     final isUser = message['role'] == 'user';
 
-                    return Padding(
-                      padding: const EdgeInsets.only(bottom: 16),
-                      child: Row(
-                        mainAxisAlignment:
-                            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          if (!isUser) ...[
-                            Container(
-                              padding: const EdgeInsets.all(8),
-                              decoration: const BoxDecoration(
-                                color: Colors.black,
-                                shape: BoxShape.circle,
-                              ),
-                              child: const Icon(Icons.smart_toy, color: Colors.white, size: 18),
-                            ),
-                            const SizedBox(width: 8),
-                          ],
-                          Flexible(
-                            child: Container(
-                              padding: const EdgeInsets.all(16),
-                              decoration: BoxDecoration(
-                                gradient: isUser
-                                    ? const LinearGradient(
-                                        colors: [Color(0xFF4A00E0), Color(0xFF8E2DE2)],
-                                      )
-                                    : null,
-                                color: isUser ? null : const Color(0xFF1E1E2C),
-                                borderRadius: BorderRadius.only(
-                                  topLeft: const Radius.circular(20),
-                                  topRight: const Radius.circular(20),
-                                  bottomLeft: isUser ? const Radius.circular(20) : Radius.zero,
-                                  bottomRight: isUser ? Radius.zero : const Radius.circular(20),
+                    return TweenAnimationBuilder(
+                      duration: const Duration(milliseconds: 300),
+                      tween: Tween<double>(begin: 0, end: 1),
+                      builder: (context, double value, child) {
+                        return Opacity(
+                          opacity: value,
+                          child: Transform.translate(
+                            offset: Offset(0, 20 * (1 - value)),
+                            child: child,
+                          ),
+                        );
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: Row(
+                          mainAxisAlignment:
+                              isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            if (!isUser) ...[
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: const BoxDecoration(
+                                  color: Colors.black,
+                                  shape: BoxShape.circle,
                                 ),
+                                child: const Icon(Icons.smart_toy, color: Colors.white, size: 18),
                               ),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  if (!isUser)
-                                    Text(
-                                      'TARA',
+                              const SizedBox(width: 8),
+                            ],
+                            Flexible(
+                              child: Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  gradient: isUser
+                                      ? const LinearGradient(
+                                          colors: [Color(0xFF4A00E0), Color(0xFF8E2DE2)],
+                                        )
+                                      : null,
+                                  color: isUser ? null : const Color(0xFF1E1E2C),
+                                  borderRadius: BorderRadius.only(
+                                    topLeft: const Radius.circular(20),
+                                    topRight: const Radius.circular(20),
+                                    bottomLeft: isUser ? const Radius.circular(20) : Radius.zero,
+                                    bottomRight: isUser ? Radius.zero : const Radius.circular(20),
+                                  ),
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    if (!isUser)
+                                      Text(
+                                        'TARA',
+                                        style: GoogleFonts.poppins(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.white70,
+                                        ),
+                                      ),
+                                    if (!isUser) const SizedBox(height: 4),
+                                    SelectableText(
+                                      message['text'],
                                       style: GoogleFonts.poppins(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.white70,
+                                        color: Colors.white,
+                                        fontSize: 14,
                                       ),
                                     ),
-                                  if (!isUser) const SizedBox(height: 4),
-                                  SelectableText(
-                                    message['text'],
-                                    style: GoogleFonts.poppins(
-                                      color: Colors.white,
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
                     );
                   },
-                );
-              },
-            ),
-          ),
-          
-          // Input Area
-          Consumer<ChatProvider>(
-            builder: (context, chatProvider, child) {
-              return Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.05),
-                      blurRadius: 10,
-                      offset: const Offset(0, -5),
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          color: Colors.grey[100],
-                          borderRadius: BorderRadius.circular(30),
-                        ),
-                        child: TextField(
-                          controller: _textController,
-                          decoration: InputDecoration(
-                            hintText: 'Type a message...',
-                            hintStyle: GoogleFonts.poppins(color: Colors.grey),
-                            border: InputBorder.none,
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-                          ),
                           onSubmitted: (_) => _sendMessage(),
                         ),
                       ),
